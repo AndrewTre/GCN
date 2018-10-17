@@ -1,0 +1,67 @@
+#Load
+from scipy import sparse
+from tqdm import tqdm
+
+features = sparse.load_npz('features.npz')
+features = features.tolil()
+print(features.get_shape(),type(features))
+adj = sparse.load_npz('adj.npz')
+hasneigh_id = np.load('hasneigh_id.npy')
+hasneigh_id = hasneigh_id.tolist()
+#features = features[hasneigh_id , :]
+#adj = adj[hasneigh_id , :][: , hasneigh_id]
+
+
+rand = np.random.choice(221215, 221215)
+rand_train = rand[0:70000]
+rand_val = rand[70000:140000]
+rand_test = rand[140000:221215]
+
+#rand_train2 = list(range(201715))
+#np.random.shuffle(rand_train2)
+#rand_train = rand_train2[0:70000]
+#rand_train = rand_train + list(range(201715,210000))
+#np.random.shuffle(rand_train)
+#rand_val = rand_train2[70000:140000] + list(range(210000, 221215))
+#np.random.shuffle(rand_val)
+#rand_test = list(range(210000, 221215))
+
+adj_train = adj[rand_train, :][:, rand_train]
+#adj = adj[rand , :][: , rand]
+
+label = np.load('labels.npy')
+
+
+y_train = label[rand_train,:]
+y_val = label[rand_val,:]
+y_test = label[rand_test,:]
+
+train_mask = np.zeros((221215, 1), dtype=bool)
+val_mask = np.zeros((221215, 1), dtype=bool)
+test_mask = np.zeros((221215, 1), dtype=bool)
+
+for i in rand_train:
+    train_mask[i] = True
+
+for i in rand_val:
+    val_mask[i] = True
+    
+for i in range(len(rand)):
+    if i < 70000:
+        #train_mask[i] = True
+        pass
+    elif i >= 70000 and i < 140000:
+        val_mask[i] = True
+        #test_mask[i] = True
+    else:
+        #rain_mask[i] = True
+        #val_mask[i] = True
+        test_mask[i] = True
+
+
+train_index = np.array(rand_train)
+val_index = np.array(rand_val)
+test_index = np.array(rand_test)
+
+
+numNode_train = adj_train.shape[0]
