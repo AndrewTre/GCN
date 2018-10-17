@@ -65,3 +65,9 @@ test_index = np.array(rand_test)
 
 
 numNode_train = adj_train.shape[0]
+
+
+print(features.get_shape(),type(features))
+print(adj.get_shape(),type(adj))
+print(y_val,type(y_train))
+print(train_mask,type(train_mask))
