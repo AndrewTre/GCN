@@ -1,0 +1,689 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Aug 15 08:45:45 2018
+
+@author: y84107644 Junyan Yang
+
+load主要对数据进行预处理，程序分为3大部分
+1.读入数据并提取各类特征
+2.根据边的关系构建邻接矩阵Adj，并返回数据中存在邻居结点的结点ID（hasneigh_id）,以及根据标签构建Label
+3.根据提取的特征构建总体特征矩阵Features
+"""
+
+##Total takes 5-6 hours to finish
+
+import csv
+import jieba
+import numpy as np
+from scipy import sparse
+from scipy.sparse import lil_matrix
+import math
+from tqdm import tqdm
+import gc
+import os
+
+
+def keywords(txt, flag=False):
+    """
+    使用TFIDF方法提取特征词
+    jieba分词 - 取出停用词以及一些特定场景的词 - 计算TF和IDF - 得到关键词列表
+    
+    返回每个结点的分词结果words，和所有结点的关键词keywords
+     
+    """
+     
+    
+    #words = [list(jieba.cut(doc)) for doc in txt]
+    words = []
+    for i in tqdm(range(len(txt))):
+        words.append(list(jieba.cut(txt[i])))
+    
+    print('Segmentation Finished')
+    
+    #load stopwords
+    file_name = 'stopwords.txt'
+    stopwords = []
+    
+    for line in open(file_name):
+        line = line.split()
+        stopwords.extend(line)
+    
+    
+    if flag:
+        for i in tqdm(range(len(words))):
+            for j in words[i][:]:
+                if not j.isalnum():
+                    words[i].remove(j)
+                if j in stopwords:
+                    words[i].remove(j)
+                if 'DTS' in j:
+                    words[i].remove(j)
+                    
+    else:
+        for i in tqdm(range(len(words))):
+            for j in words[i][:]:
+                if not j.isalnum():
+                    words[i].remove(j)
+                if j in stopwords:
+                    words[i].remove(j)
+                    
+    
+    print('starting tfidf...')
+    #Create a dict for key words
+    txt_dic = []
+    for i in words:
+        if i != []:
+            for j in i:
+                if not j in txt_dic:
+                    txt_dic.append(j)
+     
+    
+    #TF-IDF
+    zero = [1] * len(txt_dic)
+    txt_dict = {k: v for k, v in zip(txt_dic, zero)}
+    
+    
+    for i in range(len(words)):
+        if words[i] != []:
+            for j in words[i]:
+                txt_dict[j] += 1
+    
+    idf_score = txt_dict
+    for key in idf_score:
+        idf_score[key] = ( math.log(len(words) / idf_score[key] ,10) )
+    
+    
+    print('finished calculating tfidf.')
+    keywords = []
+    for i in tqdm(range(len(words))):
+        tf_score = []
+        if words[i] != []:
+            for j in words[i]:
+                tf_score.append( words[i].count(j) / len(words[i]) * idf_score[j] )
+            keyword = tf_score.index(max(tf_score))
+            keywords.append(words[i][keyword])
+    
+    keywords = list(set(keywords))
+    
+    return keywords, words
+    
+
+def subsystem(subsys):
+    """
+    对子系统进行one-hot编码
+    
+    返回子系统编码的稀疏矩阵
+    """
+    
+    set_subsys = set(subsys)
+    set_subsystem = [i for i in set_subsys]
+    num_subsys = len(set_subsys)
+    
+    dict_subsys = {}
+    for i in range(num_subsys):
+        dict_subsys[set_subsystem[i]] = i
+    
+    sub_features = np.zeros((len(subsys), num_subsys))
+    
+    for i in range(len(subsys)):
+        sub_features[i][dict_subsys[subsys[i]]] = 1
+    
+    return sub_features
+
+
+
+
+
+"""
+1.读入数据并提取各类特征
+"""
+
+#Load req ################## version->label, txt, subsys->features #########
+csv_reader = csv.reader(open('request.csv', encoding='utf-8'))
+
+req = []
+
+for row in csv_reader:
+    req.append(row)
+
+req_id = []
+req_version = []
+req_txt = []
+req_subsys = []
+
+for item in req:
+    req_id.append(item[5])
+    req_version.append( item[6])  
+    req_txt.append (item[3])
+    req_subsys.append(item[2])
+    
+del req_version[0], req_txt[0], req_subsys[0], req_id[0]
+
+set1 = set(req_version)
+print(len(set1))
+num_label = len(set1)
+
+###提取特征
+req_keywords, req_words = keywords(req_txt)
+req_sub_features = subsystem(req_subsys)
+print('Finished processing Req. \n')
+
+###########################################`
+
+
+#Load dts ################## version->label, txt, subsys ->features #########
+csv_reader = csv.reader(open('issue.csv', encoding='utf-8'))
+
+dts = []
+for row in csv_reader:
+    dts.append(row)
+
+dts_id = []
+dts_version = []
+dts_txt = []
+dts_subsys = []
+
+for item in dts:
+    dts_id.append(item[1])
+    dts_version.append( item[3] )
+    dts_txt.append (item[5])
+    dts_subsys.append(item[2])
+    
+del dts_version[0], dts_txt[0], dts_subsys[0], dts_id[0]
+
+#sort
+dts_version2 = []
+dts_txt2 = []
+dts_subsys2 = []
+dts_id2 = []
+b = sorted(enumerate(dts_version), key=lambda x:x[1])
+for i in range(len(b)):
+    dts_version2.append(dts_version[b[i][0]])
+    dts_txt2.append(dts_txt[b[i][0]])
+    dts_subsys2.append(dts_subsys[b[i][0]])
+    dts_id2.append(dts_id[b[i][0]])
+
+dts_version = dts_version2
+dts_txt = dts_txt2
+dts_subsys = dts_subsys2
+dts_id = dts_id2
+#######
+
+###提取特征
+dts_keywords, dts_words = keywords(dts_txt)
+dts_sub_features = subsystem(dts_subsys)
+print('Finished processing Dts. \n')
+
+##########################################
+
+
+#Load testcase ############## version->label, txt->features #########
+csv_reader = csv.reader(open('test_case.csv', encoding='utf-8'))
+
+testcase = []
+for row in csv_reader:
+    testcase.append(row)
+
+testcase_id = []
+testcase_version = []
+testcase_txt = []
+
+for item in testcase:
+    testcase_id.append(item[1])
+    testcase_version.append( item[7] )
+    testcase_txt.append( item[6] )
+    
+del testcase_version[0], testcase_txt[0], testcase_id[0]
+
+
+###提取特征
+if os.path.exists('testcase_keywords.npy'):
+    testcase_keywords = np.load('testcase_keywords.npy')
+    testcase_words = np.load('testcase_words.npy')
+    testcase_keywords = testcase_keywords.tolist()
+    testcase_words = testcase_words.tolist()
+    
+else:
+    testcase_keywords, testcase_words = keywords(testcase_txt)
+    
+print('Finished processing Testcase. \n')
+
+##########################################
+
+
+
+#Load employee ############# version->label, dep->features #########
+def encode_dep(dep_r, dict_dep):
+    """
+    对部门进行树形编码
+    """
+    
+    set_dep = set(dep_r)
+    
+    if '*' in set_dep:
+        set_dep.remove('*')
+        
+    dep_cat_sub = []
+    
+    #print(len(set_dep))
+    i = 0
+    ## 如果部门长度较长，可以增大'{0:04b}'
+    for item in set_dep:
+        dict_dep[item] = '{0:04b}'.format(i)
+        dep_cat_sub.append(item)
+        i=i+1
+    return dict_dep, dep_cat_sub
+
+
+def dep_i(dep , k):
+    dep_i = []
+    for item in dep:
+        if k < len(item):
+            dep_i.append(item[k])
+        else:
+            dep_i.append('*')
+    
+    return dep_i
+
+
+csv_reader = csv.reader(open('person.csv', encoding='utf-8'))
+
+employee = []
+for row in csv_reader:
+    employee.append(row)
+
+employee_id = []
+employee_version = []
+employee_dep =[]
+
+for item in employee:
+    employee_id.append(item[1])
+    employee_version.append( item[4] )
+    employee_dep.append( item[2].split(' / ') )
+del employee_version[0], employee_dep[0], employee_id[0]
+
+## 去重 （如果数据里code没有重复 可以注释掉）
+employee_id2 = list(set(employee_id))
+employee_version2 = []
+employee_dep2 = []
+for i in range(len(employee_id2)):
+    index = employee_id.index(employee_id2[i])
+    employee_version2.append(employee_version[index])
+    employee_dep2.append(employee_dep[index])
+
+employee_id = employee_id2
+employee_version = employee_version2
+employee_dep = employee_dep2
+
+
+
+##求出最长的部门路径长度
+max_length = max([len(employee_dep[i]) for i in range(len(employee_dep))])
+
+###提取特征
+dep_r = []
+
+for i in range(max_length):
+   dep_r.append(dep_i(employee_dep, i))
+
+dict_dep = {}
+
+    
+dict_dep, dep_cat_sub = encode_dep(dep_r[0], dict_dep)
+dep_cat = [dep_cat_sub]
+
+for j in range(5): 
+    cat = []
+    for dep_cat_sub in dep_cat:
+        if dep_cat_sub != []:
+            for item in dep_cat_sub:
+                
+                indices = [i for i,v in enumerate(dep_r[j]) if v==item]
+                
+                tmp = []
+                for i in indices:
+                    tmp.append(dep_r[j+1][i]) 
+                
+                dict_dep , dep_cat_tmp = encode_dep(tmp, dict_dep)
+                
+                cat.append(dep_cat_tmp)
+            
+    dep_cat = cat            
+        
+
+for i in range(len(employee_dep)):
+    for j in range(len(employee_dep[i])):
+        employee_dep[i][j] = dict_dep[employee_dep[i][j]]
+
+employ_dep_encode = []
+for item in employee_dep:
+    if len(item) < max_length:
+        item.extend(['0000'] * (max_length - len(item)))
+    employ_dep_encode.append("".join(item))
+
+print('Finished processing Employee. \n')
+#########################################
+
+
+#Load code file ############# version->label, path->features #########
+csv_reader = csv.reader(open('file.csv', encoding='utf-8'))
+
+code = []
+for row in csv_reader:
+    code.append(row)
+
+code_id = []
+code_version = []
+code_path =[]
+
+for item in code:
+    code_id.append(item[0])
+    code_version.append( item[2] )
+    code_path.append( item[1][7:].split('/') )
+del code_version[0], code_path[0], code_id[0]
+
+
+## 去重 （如果数据里code没有重复 可以注释掉）
+code_id2 = list(set(code_id))
+code_version2 = []
+code_path2 = []
+for i in range(len(code_id2)):
+    index = code_id.index(code_id2[i])
+    code_version2.append(code_version[index])
+    code_path2.append(code_path[index])
+
+code_id = code_id2
+code_version = code_version2
+code_path = code_path2
+
+
+
+code_path_key = []
+for i in range(len(code_path)):
+    del code_path[i][-1]
+    code_path_key.extend(code_path[i])
+
+code_path_key = set(code_path_key)
+code_path_dict = {}
+
+n = 0
+for i in code_path_key:
+    code_path_dict[i] = n
+    n += 1
+
+
+print('Finished processing Code. \n')
+#########################################
+
+
+#Load commit ############# version->label, path, txt->features #########
+csv_reader = csv.reader(open('commit.csv', encoding='utf-8'))
+
+commit = []
+for row in csv_reader:
+    commit.append(row)
+
+commit_id = []
+commit_version = []
+commit_path =[]
+commit_txt = []
+
+
+for item in commit:
+    commit_id.append(item[0])
+    commit_version.append( item[2] )
+    commit_path.append( item[1][7:].split('/') )
+    commit_txt.append( item[3] )
+    
+del commit_version[0], commit_path[0], commit_id[0], commit_txt[0]
+
+
+commit_path_key = []
+for i in range(len(commit_path)):
+    del commit_path[i][-1]
+    commit_path_key.extend(commit_path[i])
+
+commit_path_key = set(commit_path_key)
+commit_path_dict = {}
+
+n = 0
+for i in commit_path_key:
+    commit_path_dict[i] = n
+    n += 1
+
+
+
+if os.path.exists('commit_keywords.npy'):
+    commit_keywords = np.load('commit_keywords.npy')
+    commit_words = np.load('commit_words.npy')
+    commit_keywords = commit_keywords.tolist()
+    commit_words = commit_words.tolist()
+    
+else:
+    commit_keywords, commit_words = keywords(commit_txt, flag = True)
+
+print('Finished processing Commit. \n')
+
+##########################################
+
+## save key_words
+if not os.path.exists('commit_keywords.npy'):
+    np.save('testcase_keywords.npy', testcase_keywords)
+    np.save('testcase_words.npy', testcase_words)
+    np.save('commit_keywords.npy', commit_keywords)
+    np.save('commit_words.npy', commit_words)
+
+
+
+
+"""
+2.根据边的关系构建邻接矩阵Adj，并返回数据中存在邻居结点的结点ID（hasneigh_id）,以及根据标签构建Label
+"""
+
+feature_len = len(req_sub_features[0]) + len(req_keywords) + len(dts_sub_features[0]) + len(dts_keywords) + len(testcase_keywords) \
++ len(employ_dep_encode[0]) + len(code_path_key) + len(commit_path_key) + len(commit_keywords)
+node_len = len(req_txt) +len(dts_txt) + len(testcase_txt) + len(employ_dep_encode) + len(code_id) + len(commit_id)
+
+
+features = lil_matrix( (node_len, feature_len) )
+
+
+l_req1 = len(req_txt)
+l_req2 = len(req_sub_features[0])
+l_req3 = len(req_keywords)
+l_dts1 = len(dts_txt)
+l_dts2 = len(dts_sub_features[0])
+l_dts3 = len(dts_keywords)
+l_test1 = len(testcase_txt)
+l_test2 = len(testcase_keywords)
+l_emp1 = len(employ_dep_encode)
+l_emp2 = len(employ_dep_encode[0])
+l_code1 = len(code_id)
+l_code2 = len(code_path_key)
+l_commit1 = len(commit_id)
+l_commit2 = len(commit_path_key)
+l_commit3 = len(commit_keywords)
+
+
+# encode feature of req
+for i in tqdm(range(len(req_sub_features))):
+    for j in range(len(req_sub_features[0])):
+        if req_sub_features[i][j] == 1:
+            features[i , j] = 1
+
+
+for i in tqdm(range(len(req_words))):
+    if req_words[i] != []:
+        for j in range(len(req_words[i])):
+            if req_words[i][j] in req_keywords:
+                k = req_keywords.index(req_words[i][j])
+                features[i , k + l_req2] = 1
+
+print('Finished encoding req')     
+
+# encode feature of issue
+for i in tqdm(range(len(dts_sub_features))):
+    for j in range(len(dts_sub_features[0])):
+        if dts_sub_features[i][j] == 1:
+            features[i + l_req1 , j + l_req2 + l_req3] = 1
+
+        
+for i in tqdm(range(len(dts_words))):
+    if dts_words[i] != []:
+        for j in range(len(dts_words[i])):
+            if dts_words[i][j] in dts_keywords:
+                k = dts_keywords.index(dts_words[i][j])
+                features[i + l_req1 , k + l_req2 + l_req3 + l_dts2] = 1
+      
+print('Finished encoding dts') 
+
+# encode feature of testcase    
+for i in tqdm(range(len(testcase_words))):
+    if testcase_words[i] != []:
+        for j in range(len(testcase_words[i])):
+            if testcase_words[i][j] in testcase_keywords:
+                k = testcase_keywords.index(testcase_words[i][j])
+                features[i + l_req1 + l_dts1 , k + l_req2 + l_req3 + l_dts2 + l_dts3] = 1
+
+print('Finished encoding testcase') 
+
+# encode feature of person
+for i in range(len(employ_dep_encode)):
+    for j in range(len(employ_dep_encode[0])):
+        if employ_dep_encode[i][j] == 1:
+            features[i + l_req1 + l_dts1 + l_test1 , j + l_req2 + l_req3 + l_dts2 + l_dts3 + l_test2] = 1
+
+print('Finished encoding person') 
+
+# encode feature of code
+for i in tqdm(range(len(code_path))):
+    for j in range(len(code_path[i])):
+        features[i + l_req1 + l_dts1 + l_test1 + l_emp1 , code_path_dict[code_path[i][j]] + l_req2 + l_req3 + l_dts2 + l_dts3 + l_test2 + l_emp2 ] = 1
+
+print('Finished encoding code') 
+
+# encode feature of commit
+for i in tqdm(range(len(commit_path))):
+    for j in range(len(commit_path[i])):
+        features[i + l_req1 + l_dts1 + l_test1 + l_emp1 + l_code1 , commit_path_dict[commit_path[i][j]] + l_req2 + l_req3 + l_dts2 + l_dts3 + l_test2 + l_emp2 + l_code2 ] = 1
+
+
+for i in tqdm(range(len(commit_words))):
+    if commit_words[i] != []:
+        for j in range(len(commit_words[i])):
+            if commit_words[i][j] in commit_keywords:
+                k = commit_keywords.index(commit_words[i][j])
+                features[i + l_req1 + l_dts1 + l_test1 + l_emp1 + l_code1 , k + l_req2 + l_req3 + l_dts2 + l_dts3 + l_test2 + l_emp2 + l_code2 + l_commit2] = 1
+
+print('Finished encoding commit') 
+
+#save features
+sparse.save_npz('features.npz', features.tocsr())
+
+
+## garbage collect to save memory ####
+del req_keywords, req_words, dts_keywords, dts_words, testcase_keywords, testcase_words, commit_keywords, commit_words, features
+gc.collect()
+
+
+
+
+"""
+3.根据提取的特征构建总体特征矩阵Features
+"""
+##### create Adj #########################
+csv_reader = csv.reader(open('REL.csv', encoding='utf-8'))
+
+rel = []
+for row in csv_reader:
+    rel.append(row)
+
+
+csv_reader = csv.reader(open('REL2.csv', encoding='utf-8'))
+
+rel2 = []
+for row in csv_reader:
+    rel2.append(row)
+
+
+source_id = []
+target_id = []
+
+for item in rel:
+    source_id.append(item[0])
+    target_id.append(item[1])
+del source_id[0], target_id[0]
+
+for item in rel2:
+    source_id.append(item[0])
+    target_id.append(item[1])
+
+
+total_id = []
+total_id.extend(req_id)
+total_id.extend(dts_id)
+total_id.extend(testcase_id)
+total_id.extend(employee_id)
+total_id.extend(code_id)
+total_id.extend(commit_id)
+
+
+dict_id = {}
+for i in range(len(total_id)):
+    dict_id[total_id[i]] = i
+
+#检测是否重复
+if len(total_id) != len(dict_id):
+    raise ValueError('There exists Duplicates')
+
+
+adj = lil_matrix((len(total_id), len(total_id)))
+
+count = 0
+hasneigh_id = []
+
+for i in tqdm(range(len(source_id))):
+    if source_id[i] in dict_id.keys() and target_id[i] in dict_id.keys():
+        adj[dict_id[source_id[i]], dict_id[target_id[i]]] = 1
+        adj[dict_id[target_id[i]], dict_id[source_id[i]]] = 1
+        count += 1
+        hasneigh_id.append(dict_id[source_id[i]])
+        hasneigh_id.append(dict_id[target_id[i]])
+
+
+
+
+hasneigh_id = list(set(hasneigh_id))
+np.save('hasneigh_id.npy', hasneigh_id)
+
+#save Adj
+adj = adj.tocsr()
+sparse.save_npz('adj.npz', adj)
+print('Finished adjacency matrix')
+
+
+
+#create and save labels
+label = []
+label.extend(req_version)
+label.extend(dts_version)
+label.extend(testcase_version)
+label.extend(employee_version)
+label.extend(code_version)
+label.extend(commit_version)
+
+set_label = set(label)
+print('number of version: ', len(set_label))
+
+set_labels = [i for i in set_label]
+dict_label = {}
+for i in range(num_label):
+    dict_label[set_labels[i]] = i
+    
+labels = np.zeros((len(label) ,num_label))
+for i in range(len(label)):
+    labels[i][dict_label[label[i]]] = 1
+
+
+np.save('labels.npy', labels)
+print('Finished saving labels')
